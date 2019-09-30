@@ -1,0 +1,7 @@
+path "REDACTED/*" {
+  capabilities = ["create", "read", "update", "delete", "list"]
+}
+
+path "ssh_development/*" {
+  capabilities = ["create", "read", "update", "delete", "list"]
+}

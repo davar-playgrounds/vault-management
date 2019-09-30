@@ -1,0 +1,99 @@
+# Synopsis: Initializes Hashicorp Vault with self signed OpenSSL certificate
+# Inputs: 
+#     vault_config_path - directory on vault machine where vault configuration files are stored
+# Outputs: 
+#     self signed OpenSSL certificate for Vault to use for communication over https
+#     root/vault-initialization.tmp - which contains unseal key and root token
+
+
+- name: Generate new root certificate authority RSA key for self-signed SSL certificate
+  shell: openssl genrsa -out "{{ vault_config_path }}"/vault-ca.key 2048
+
+- name: Sign root certificate authority RSA key
+  shell: openssl req -new -x509 -days 7300 -key "{{ vault_config_path }}"/vault-ca.key -subj "/C=US/ST=Massachusetts/L=Marlboro/O=REDACTED/OU=Security/CN=vault.internal" -out "{{ vault_config_path }}"/vault-ca.crt
+
+- name: Generate new Vault server RSA key
+  shell: openssl req -newkey rsa:2048 -nodes -keyout "{{ vault_config_path }}"/vault.key -subj "/C=US/ST=Massachusetts/L=Marlboro/O=REDACTED/OU=Security/CN=vault.internal" -out "{{ vault_config_path }}"/vault.csr
+
+- name: Sign Vault server RSA key with x509 signature using signed CA key to use as self-signed SSL certificate
+  shell: su -c "openssl x509 -req -extfile <(printf 'subjectAltName = DNS.1:vault.internal, DNS.2:localhost, IP.1:127.0.0.1') -days 7300 -in {{ vault_config_path }}/vault.csr -CA {{ vault_config_path }}/vault-ca.crt -CAkey {{ vault_config_path }}/vault-ca.key -CAcreateserial -out {{ vault_config_path }}/vault.crt"
+
+- name: Create PEM-encoded CA certificate
+  shell: cat "{{ vault_config_path }}"/vault.crt > "{{ vault_config_path }}"/ca.pem && cat "{{ vault_config_path }}"/vault-ca.crt >> "{{ vault_config_path }}"/ca.pem
+
+- name: Pause playbook execution for 10 seconds to wait for Vault init. Believe it or not this matters...
+  pause:
+    seconds: 10
+
+# TODO: Have Ansible intelligently wait for output or condition from previous commands before proceeding to Vault initialization
+#     Revising testing approach and figure out how to get line of sight on an error that only occurs in a brief window
+#     Suspect: restarting the Vault and/or Consul services at the end of the install.yml task
+
+- name: Initialize vault
+  shell: /usr/local/bin/vault operator init -key-shares=1 -key-threshold=1 
+  register: vault_initialization_output
+  environment:
+    VAULT_ADDR: https://127.0.0.1:8200
+    VAULT_SKIP_VERIFY: true
+  no_log: true
+
+# NOTE: Output from Vault initialization subject to change depending on version, attempt to parse from various known outputs, ignoring errors on failed searches
+
+- name: Parse out vault unseal key from initialization output, format attempt 1
+  set_fact:
+    vault_unseal_key: "{{ vault_initialization_output.stdout | regex_search('(?<=Recovery Key 1:\\s)(.*?)(?=\\n)','\\1') | list | join('') }}"
+  no_log: true
+  ignore_errors: yes
+
+- name: Parse out vault unseal key from initialization output, format attempt 1
+  set_fact:
+    vault_unseal_key: "{{ vault_initialization_output.stdout | regex_search('(?<=Unseal Key 1:\\s)(.*?)(?=\\n)','\\1') | list | join('') }}"
+  no_log: true
+  ignore_errors: yes
+  when: vault_unseal_key is not defined
+
+- name: Fail if unable to parse out vault unseal key from initialization output
+  fail:
+    msg: "Unable to parse out vault unseal key from vault initialization output. This output is subject to change depending on vault version, and it is possible that a new format has made it so the regex expressions trying to parse out unseal key no longer works. Please try executing this plabook with verbosity level 3 (-vvv) to gain a line of sight on the output from vault initialization"
+  when: vault_unseal_key is not defined
+
+- name: Parse out vault root token from initialization output, format attempt 1
+  set_fact:
+    vault_token_root: "{{ vault_initialization_output.stdout | regex_search('(?<=Initial Root Token:\\s)(.*?)(?=\\n)','\\1') | list | join('') }}"
+  no_log: true
+  ignore_errors: yes
+
+- name: Fail if unable to parse out vault root token from initialization output
+  fail:
+    msg: "Unable to parse out vault root token from vault initialization output. This output is subject to chan
+ge depending on vault version, and it is possible that a new format has made it so the regex expressions trying
+ to parse out unseal key no longer works. Please try executing this plabook with verbosity level 3 (-vvv) to ga
+in a line of sight on the output from vault initialization"
+  when: vault_token_root is not defined
+
+- name: Save unseal and root token to /root/vault-initialization.tmp
+  copy:
+    content: "{{ vault_initialization_output.stdout_lines }}"
+    dest: "/root/vault-initialization.tmp"
+  no_log: true
+
+# Setup the root user's environment
+
+- name: Set VAULT_TLS_SERVER_NAME in /root/.bashrc
+  lineinfile:
+    path: /root/.bashrc
+    regexp: '^export VAULT_TLS_SERVER_NAME='
+    line: 'export VAULT_TLS_SERVER_NAME=vault.internal'
+
+- name: Set VAULT_SKIP_VERIFY in /root/.bashrc
+  lineinfile:
+    path: /root/.bashrc
+    regexp: '^export VAULT_SKIP_VERIFY='
+    line: 'export VAULT_SKIP_VERIFY=true'
+
+- name: Set VAULT_ADDR in /root/.bashrc
+  lineinfile:
+    path: /root/.bashrc
+    regexp: '^export VAULT_ADDR='
+    line: 'export VAULT_ADDR=https://127.0.0.1:8200'
+

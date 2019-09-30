@@ -1,0 +1,30 @@
+# Synopsis: Enables Hashicorp Vault ssh secrets engines by default with specified ttls
+# Inputs:
+#     vault_config_path - location for the files that will be used to configure vault
+#     vault_account_name - this is the user and group used to run vault
+#     vault_engines_ssh - dictionary of names for ssh secrets engines to enable, please see comments in defaults/main.yml for details
+# Outputs:
+#     default enabled ssh secrets engines within Hashicorp Vault
+
+
+- name: Copy vault ssh engine policy files from template
+  template:
+    src: vault-ssh-engine.policy.j2
+    dest: "{{ vault_config_path }}/{{ item.key }}.policy"
+    mode: 0640
+    owner: "{{ vault_account_name }}"
+    group: "{{ vault_account_name }}"
+  loop: "{{ lookup('dict', vault_engines_ssh) }}"
+
+- name: Enable ssh secrets engines
+  shell: /usr/local/bin/vault secrets enable -path={{ item.key }} ssh
+  loop: "{{ lookup('dict', vault_engines_ssh) }}"
+
+- name: Configure Vault with a CAs for signing client keys with each ssh secrets engine
+  shell: /usr/local/bin/vault write {{ item.key }}/config/ca generate_signing_key=true
+  loop: "{{ lookup('dict', vault_engines_ssh) }}"
+
+- name: Create Vault roles for signing client keys
+  shell: /usr/local/bin/vault write {{ item.key }}/roles/approved-clients @{{ vault_config_path }}/{{ item.key }}.policy
+  loop: "{{ lookup('dict', vault_engines_ssh) }}"
+

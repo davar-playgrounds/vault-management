@@ -1,0 +1,52 @@
+# Synopsis: Restores new Vault instance from existing remote consul snapshot stored in AWS S3 instead of creating new empty Vault
+# Inputs:
+#     consul_config_path - location for the files that will be used to configure consul
+#     consul_account_name - this is the user and group used to run consul
+#     consul_backup_directory - local directory on vault server to store consul backups
+#     consul_backup_s3_bucket - s3 bucket name to store consul backups, if left empty, vault server will not be configured to back itself up to remote AWS S3 bucket
+#     consul_backup_s3_bucket_prefix - subfolder within s3 bucket to store consul backups
+#     consul_snapshot_s3_restoration_key - aws s3 key to remote snapshot file to automatically restore new vault from, default left empty meaning no restoration will be performed and role will create new empty vault
+# Outputs:
+#     A new view instance restored from an existing Consul snapshot stored in AWS S3
+
+
+- name: Create local folder on Vault machine to store consul backups
+  file:
+    path: "{{ consul_backup_directory }}"
+    state: directory
+    owner: "{{ consul_account_name }}"
+    group: "{{ consul_account_name }}"
+
+- name: Grab unique timestamp to append to downloaded consul snapshot filename
+  set_fact:
+    current_timestamp: "{{ ansible_date_time.iso8601 }}"
+
+- name: Download specified snapshot to restore from
+  aws_s3:
+    bucket: "{{ consul_backup_s3_bucket }}"
+    object: "{{ consul_snapshot_s3_restoration_key }}"
+    dest: "{{ consul_backup_directory }}/restored-consul-snapshot-{{ current_timestamp }}.snap"
+    mode: get
+
+- name: Dump key where snapshot was restored from in adjacent file
+  copy:
+    content: "{{ consul_snapshot_s3_restoration_key }}"
+    dest: "{{ consul_backup_directory }}/restored-consul-snapshot-{{ current_timestamp }}.txt"
+
+- name: Restore consul backend from downloaded snapshot
+  shell: "/usr/local/bin/consul snapshot restore {{ consul_backup_directory }}/restored-consul-snapshot-{{ current_timestamp }}.snap"
+
+- name: Restart vault and consul services
+  service:
+    name: "{{ item }}"
+    enabled: yes
+    state: restarted
+  loop:
+    - consul.service
+    - vault.service
+
+- name: Remove vault initialization output file since this becomes obsolete after consul restoration
+  file:
+    path: /root/vault-initialization.tmp
+    state: absent
+

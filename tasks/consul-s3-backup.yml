@@ -1,0 +1,38 @@
+# Synopsis: Task will copy over the necessary script to run as an hourly cron job which will perform the action of backing up a snapshot of the vault instance's consul backend to AWS S3
+# Inputs:
+#     consul_config_path - location for the files that will be used to configure consul
+#     consul_account_name - this is the user and group used to run consul
+#     consul_backup_directory - local directory on vault server to store consul backups
+#     consul_backup_s3_bucket - s3 bucket name to store consul backups, if left empty, vault server will not be configured to back itself up to remote AWS S3 bucket
+#     consul_backup_s3_bucket_prefix - subfolder within s3 bucket to store consul backups
+# Outputs:
+#     A locally stored consul snapshot every hour which is then copied to a remote AWS S3 bucket
+
+
+- name: Create local folder on Vault machine to store consul backups
+  file:
+    path: "{{ consul_backup_directory }}"
+    state: directory
+    owner: "{{ consul_account_name }}"
+    group: "{{ consul_account_name }}"
+
+- name: Copy consul snapshot script from template
+  template:
+    src: backup-consul.sh.j2
+    dest: "{{ consul_config_path }}/backup-consul.sh"
+    mode: 0755
+
+- name: Ensure that cron service in running
+  service:
+    name: crond
+    state: started
+
+- name: Setup a cron task to backup consul every hour
+  cron:
+    name: "Backup consul snapshot every hour to remote AWS S3 bucket {{ consul_backup_s3_bucket }}"
+    minute: "0"
+    hour: "*"
+    day: "*"
+    job: "bash {{ consul_config_path }}/backup-consul.sh > /dev/null"
+    user: "root"
+

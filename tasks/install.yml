@@ -1,0 +1,126 @@
+# Synopsis: This task file is used to configure a single vault instance using consul as the backend. The task file will also create vault/consul groups and users to manage both services. Lastly the firewalld service will be configured to allow public access to Vault User Interface.
+# Inputs:
+#     vault_config_path - location for the files that will be used to configure vault
+#     vault_account_name - this is the user and group used to run vault
+#     vault_download_url - this is the url that will contain the vault zip file retrieved from releases.hashicorp.com
+#     vault_tcp_address - address that vault will listen on
+#     disable_vault_tls - when value is set to 1 tls is disabled and Vault must be accessed via http
+#     aws_kms_key_region - AWS region with KMS key to unseal Vault
+#     aws_kms_key_id - AWS KMS key id to unseal Vault
+#     consul_config_path - location for the files that will be used to configure consul
+#     consul_account_name - this is the user and group used to run consul
+#     consul_download_url - this is the url that will contain the consul zip file retrieved from releases.hashicorp.com
+#     consul_address - consul listening address and port
+# Outputs: 
+#     Local users will be created for vault and consul services
+#     Vault and Consul services will be configured and running on completion of this task
+
+
+- name: Creating non-interactive local users for vault and consul
+  user:
+    name: "{{ item.account }}"
+    system: yes
+    shell: "/bin/false"
+    home: "{{ item.path }}"
+    comment: "{{ item.name }} nologin User"
+    createhome: "no"
+    state: present
+  loop:
+    - { name: "vault", account: "{{ vault_account_name }}", path: "{{ vault_config_path }}" }
+    - { name: "consul", account: "{{ consul_account_name }}", path: "{{ consul_config_path }}" }
+
+- name: Install vault and consul from hashicorp website
+  unarchive:
+    src: "{{ item }}"
+    dest: /usr/local/bin/
+    remote_src: yes
+  loop:
+    - "{{ vault_download_url }}"
+    - "{{ consul_download_url }}"
+
+- name: Give Vault the ability to use the mlock syscall without running the process as root
+  capabilities:
+    path: /usr/local/bin/vault
+    capability: cap_ipc_lock+ep
+    state: present
+
+- name: Create necessary folders for vault and consul config files
+  file:
+    dest: "{{ item }}"
+    state: directory
+  loop:
+    - "{{ vault_config_path }}"
+    - "{{ consul_config_path }}"
+
+- name: Copy necessary config files from templates for vault and consul
+  template:
+    src: "{{ item.template }}"
+    dest: "{{ item.path }}/{{ item.filename }}"
+    mode: 0640
+    owner: "{{ item.account }}"
+    group: "{{ item.account }}"
+  loop:
+    - { template: "vault.hcl.j2", filename: "vault.hcl", path: "{{ vault_config_path }}", account: "{{ vault_account_name }}" }
+    - { template: "consul.agent.hcl.j2", filename: "consul.hcl", path: "{{ consul_config_path }}", account: "{{ consul_account_name }}" }
+    - { template: "consul.server.hcl.j2", filename: "server.hcl", path: "{{ consul_config_path }}", account: "{{ consul_account_name }}" }
+
+- name: Copy vault policy file
+  copy:
+    src: policy.application.json
+    dest: "{{ vault_config_path }}/"
+
+- name: Create folder to store consul data
+  file:
+    path: /opt/consul
+    state: directory
+    owner: "{{ consul_account_name }}"
+    group: "{{ consul_account_name }}"
+
+- name: Generate a unique consul encryption key
+  shell: /usr/local/bin/consul keygen
+  register: consul_encryption_key_output
+  no_log: true
+
+- name: Update the consul cofiguration with the consul encryption key
+  lineinfile:
+    path: "{{ consul_config_path }}/consul.hcl"
+    regexp: '^encrypt'
+    line: 'encrypt = "{{ consul_encryption_key_output.stdout }}"'
+  no_log: true
+
+- name: Copy service config templates to local directory for consul and vault
+  template:
+    src: "service.{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}.service"
+    owner: root
+    group: root
+  loop:
+    - vault
+    - consul
+
+- name: Set permanent firewall rule to enable vault ui over port 8200
+  firewalld:
+    port: 8200/tcp
+    immediate: yes
+    permanent: yes
+    state: enabled
+
+- name: Reload systemd daemon to pickup service changes
+  systemd:
+    daemon_reload: yes
+
+- name: Restart vault and consul services
+  service:
+    name: "{{ item }}"
+    enabled: yes
+    state: restarted
+  loop:
+  - vault.service
+  - consul.service
+
+- name: Enable autocomplete for vault cli
+  shell: /usr/local/bin/vault -autocomplete-install
+
+- name: Enable autocomplete for consul cli
+  shell: /usr/local/bin/consul -autocomplete-install
+

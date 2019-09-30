@@ -1,0 +1,44 @@
+# Synopsis: Installs and configures Hashicorp Vault
+# Inputs:
+#     consul_backup_s3_bucket - s3 bucket name to store consul backups, if left empty, vault server will not be configured to back itself up to remote AWS S3 bucket
+#     consul_snapshot_s3_restore_in_place - restore vault from remote consul snapshot in s3 in place when set to true
+#     consul_snapshot_s3_restoration_key - aws s3 key to remote snapshot file to automatically restore new vault from, default left empty meaning no restoration will be performed and role will create new empty vault
+#     vault_engines_enable_ssh - only enable ssh secrets engines when set to true
+#     vault_engines_enable_aws - only enable aws secrets engines when set to true
+
+
+- name: Install Hashicorp Vault
+  include: install.yml
+  when: not ( consul_snapshot_s3_restore_in_place | bool )
+
+- name: Initialize Hashicorp Vault
+  include: initialize.yml
+  when: not ( consul_snapshot_s3_restore_in_place | bool )
+
+- name: Configure Vault to backup Consul snapshots to remote AWS S3 bucket every hour
+  include: consul-s3-backup.yml
+  when: not ( consul_snapshot_s3_restore_in_place | bool ) and ( consul_backup_s3_bucket != "" )
+
+- name: Restore Vault from remote Consul snapshot stored in AWS S3
+  include: consul-s3-restore.yml
+  when: consul_snapshot_s3_restoration_key != ""
+
+- name: Configure new empty Hasicorp Vault
+  block:
+
+    - name: Configure Hashicorp Vault
+      include: configure.yml
+
+    - name: Enable Vault ssh secrets engines
+      include: configure-engines-ssh.yml
+      when: vault_engines_enable_ssh | bool
+
+    - name: Enable Vault aws secrets engines
+      include: configure-engines-aws.yml
+      when: vault_engines_enable_aws | bool
+
+  when: consul_snapshot_s3_restoration_key == ""
+  environment:
+    - VAULT_CACERT: /etc/vault.d/ca.pem
+    - VAULT_TOKEN: "{{ vault_token_root }}"
+

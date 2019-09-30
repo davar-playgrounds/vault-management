@@ -1,0 +1,20 @@
+ui=true
+
+storage "consul" {
+  address = "{{ consul_address }}"
+  path = "vault/"
+  scheme = "http"
+  token = ""
+}
+
+listener "tcp" {
+  address = "{{ vault_tcp_address }}"
+  tls_cert_file = "/etc/vault.d/vault.crt"
+  tls_key_file  = "/etc/vault.d/vault.key"
+  tls_disable = "{{ disable_vault_tls }}"
+}
+
+seal "awskms" {
+  region = "{{ aws_kms_key_region }}"
+  kms_key_id = "{{ aws_kms_key_id }}"
+}

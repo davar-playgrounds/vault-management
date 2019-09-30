@@ -1,0 +1,46 @@
+# Synopsis: Configures Hashicorp Vault using a single unseal key
+# Inputs:
+#     vault_unseal_key - generated and parsed out Vault unseal key from initialization step (vault-init.yml)
+#     vault_config_path - directory on vault machine where vault configuration files are stored
+#     vault_account_name - this is the user and group used to run vault
+#     vault_create_users - boolean value which will create users defined in defaults/main.yml
+#     vault_admins - dictionary of vault admin accounts to create by default
+#     vault_aws_bound_iam_role - AWS IAM role to permit access to all vault secrets
+
+
+- name: Unseal vault
+  shell: /usr/local/bin/vault operator unseal {{ vault_unseal_key }}
+  no_log: true
+
+- name: Disable default secret engine
+  shell: /usr/local/bin/vault secrets disable secret
+
+- name: Enable secret engine for 'REDACTED' secret storage
+  shell: /usr/local/bin/vault secrets enable -path=REDACTED kv
+
+- name: Create 'REDACTED_default' policy and add entry for 'REDACTED'
+  shell: /usr/local/bin/vault policy write REDACTED_default "{{ vault_config_path }}/policy.REDACTED.json"
+
+- name: Enable username and password engine
+  shell: /usr/local/bin/vault auth enable userpass
+  when: vault_create_users | bool
+
+- name: Create local administrator accounts
+  shell: /usr/local/bin/vault write auth/userpass/users/{{ item.username }} password={{ item.password }} policies=REDACTED_default
+  loop: "{{ vault_admins }}"
+  no_log: true
+  when: vault_create_users | bool
+
+- name: Enable aws auth method
+  shell: /usr/local/bin/vault auth enable aws
+
+- name: Obtain aws account id from instance metadata
+  shell: curl -s http://169.254.169.254/latest/dynamic/instance-identity/document | grep accountId | awk '{print $3}' | tr -d '",'
+  register: aws_account_id
+
+- name: Configure aws auth method named 'dev'
+  shell: /usr/local/bin/vault write auth/aws/role/dev auth_type=ec2 bound_account_id="{{aws_account_id.stdout}}" bound_iam_role_arn="arn:aws-us-gov:iam::{{aws_account_id.stdout}}:role/{{vault_aws_bound_iam_role}}" policies=REDACTED_default max_ttl=1h
+
+# TODO: follow-up and see how to leverage IAM role rather than named aws account
+# TODO: ensure all aws auth method configurations are done properly via https://www.vaultproject.io/docs/auth/aws.html
+

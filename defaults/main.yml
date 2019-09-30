@@ -1,0 +1,85 @@
+---
+# TODO: Parameterize vault/consul releases that will allow use to download either the latest version of hashicorp vault or a specific version in the future.
+
+
+#### Consul
+
+# consul listening address and port
+consul_address: 127.0.0.1:8500
+
+# consul installation media location
+consul_download_url: https://releases.hashicorp.com/consul/1.5.3/consul_1.5.3_linux_amd64.zip
+
+# consul local linux service account name
+consul_account_name: "consul"
+
+# path for consul configurations
+consul_config_path: "/etc/consul.d"
+
+# s3 bucket name to store consul backups, if left empty, vault server will not be configured to back itself up to remote AWS S3 bucket
+consul_backup_s3_bucket: REDACTED-backups-vault
+
+# local directory on vault server to store consul backups
+consul_backup_directory: "/tmp/consul-backups"
+
+# aws s3 key to remote snapshot file to automatically restore new vault from, default left empty meaning no restoration will be performed and role will create new empty vault
+consul_snapshot_s3_restoration_key: ""
+
+# restore vault from remote consul snapshot in s3 in place when set to true
+consul_snapshot_s3_restore_in_place: "false"
+
+
+##### Vault
+
+# address that vault will listen on
+vault_tcp_address: 0.0.0.0:8200
+
+# when value is set to 1 tls is disabled and Vault must be accessed via http
+disable_vault_tls: 0
+
+# path for vault configurations
+vault_config_path: "/etc/vault.d"
+
+# vault installation media location
+vault_download_url: https://releases.hashicorp.com/vault/1.2.1/vault_1.2.1_linux_amd64.zip
+
+# vault local linux service account name
+vault_account_name: "vault"
+
+# AWS region with KMS key to unseal Vault
+aws_kms_key_region: "REDACTED"
+
+# AWS KMS key id to unseal Vault
+aws_kms_key_id: "REDACTED"
+
+# only create users when set to true
+vault_create_users: false
+
+# dictionary of vault admin accounts to create by default
+vault_admins:
+- username: bob
+  password: 11234donutsarenice
+- username: alice
+  password: cakeiscool7689
+- username: charlie
+  password: 1234flanisfun
+
+# only enable ssh secrets engines when set to true
+vault_engines_enable_ssh: true
+
+# dictionary of names for ssh secrets engines to enable
+#   key - the name of the engine in the format: ssh_ACCOUNT_ENVIRONMENT, ex: ssh_development)
+#   values:
+#     ttl - respective ssh secrets engine time to live (TTL) for signed client ssh keys (Syntax: XhXmXs, Meaning: X hours, X minutes, and X seconds
+vault_engines_ssh:
+  ssh_development:
+    ttl: "30m0s"
+  ssh_management:
+    ttl: "15m0s"
+
+# only enable aws secrets engines when set to true
+vault_engines_enable_aws: true
+
+# aws iam role to restrict vault access to by default
+vault_aws_bound_iam_role: REDACTED
+
